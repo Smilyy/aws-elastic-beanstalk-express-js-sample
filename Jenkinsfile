@@ -3,18 +3,19 @@
 // ===============================================
 
 pipeline {
-    agent any  // Jenkins orchestrates; build & scan run inside Node 18 container
+    agent any   // Jenkins orchestrates; build & scan stages run inside Node 18 Docker containers
 
     environment {
-        APP_NAME   = 'aws-node-app'
-        REGISTRY   = 'docker.io/smilyy'            // DockerHub namespace
-        IMAGE_TAG  = "${env.BUILD_NUMBER}"        // Use build number as tag
-        SNYK_TOKEN = credentials('snyk-token')    // Snyk API token stored in Jenkins
+        APP_NAME   = 'aws-node-app'                  // Application name label
+        REGISTRY   = 'docker.io/smilyy'              // DockerHub namespace
+        IMAGE_TAG  = "${env.BUILD_NUMBER}"           // Auto-increment build tag
+        SNYK_TOKEN = credentials('snyk-token')       // Snyk API token stored in Jenkins credentials
     }
 
     stages {
+
         // -------------------------------------------------
-        // 1. Checkout the repo (so workspace has app files)
+        // 1️⃣ Checkout repository (ensure app files are present)
         // -------------------------------------------------
         stage('Checkout') {
             steps {
@@ -24,7 +25,7 @@ pipeline {
         }
 
         // -------------------------------------------------
-        // 2. Build & Test inside Node 18 container
+        // 2️⃣ Build & Test inside Node 18 container
         // -------------------------------------------------
         stage('Build & Test (Node18)') {
             steps {
@@ -32,10 +33,10 @@ pipeline {
                     sh '''
                       echo ">>> Running build & tests inside Node 18 container..."
                       docker run --rm \
-                        -v $(pwd):/app \
+                        -v ${WORKSPACE}:/app \                 # mount Jenkins workspace
                         -w /app node:18 bash -c "
                           npm install --save &&
-                          npm test || true
+                          npm test || true                     # run tests; continue even if some fail
                         "
                     '''
                 }
@@ -43,22 +44,22 @@ pipeline {
         }
 
         // -------------------------------------------------
-        // 3. Security Scan (Snyk) — FAIL on HIGH/CRITICAL
+        // 3️⃣ Security Scan (Snyk) — fail on High/Critical
         // -------------------------------------------------
         stage('Security Scan (Snyk)') {
             steps {
                 script {
                     sh '''
-                      echo ">>> Running Snyk scan inside Node 18 container..."
+                      echo ">>> Running Snyk security scan inside Node 18 container..."
                       docker run --rm \
-                        -v $(pwd):/app \
+                        -v ${WORKSPACE}:/app \                 # use same workspace mount
                         -w /app node:18 bash -c "
                           npm install -g snyk &&
                           snyk auth $SNYK_TOKEN &&
                           snyk test --severity-threshold=high
                         " || EXIT_CODE=$?
                       if [ "$EXIT_CODE" != "" ]; then
-                        echo "Detected HIGH/CRITICAL vulnerabilities. Failing pipeline."
+                        echo "❌ Detected HIGH/CRITICAL vulnerabilities. Failing pipeline."
                         exit 1
                       fi
                     '''
@@ -67,16 +68,19 @@ pipeline {
         }
 
         // -------------------------------------------------
-        // 4. Build Docker Image (Node.js app container)
+        // 4️⃣ Build Docker image
         // -------------------------------------------------
         stage('Build Docker Image') {
             steps {
-                sh "docker build -t $REGISTRY/$APP_NAME:$IMAGE_TAG ."
+                sh '''
+                  echo ">>> Building Docker image..."
+                  docker build -t $REGISTRY/$APP_NAME:$IMAGE_TAG .
+                '''
             }
         }
 
         // -------------------------------------------------
-        // 5. Push Docker image to DockerHub
+        // 5️⃣ Push image to Docker Hub
         // -------------------------------------------------
         stage('Push Docker Image') {
             steps {
@@ -86,6 +90,7 @@ pipeline {
                     passwordVariable: 'DOCKER_PASS'
                 )]) {
                     sh '''
+                      echo ">>> Pushing image to DockerHub..."
                       echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin
                       docker push $REGISTRY/$APP_NAME:$IMAGE_TAG
                     '''
@@ -94,12 +99,15 @@ pipeline {
         }
     }
 
+    // -------------------------------------------------
+    // ✅ Post-build actions
+    // -------------------------------------------------
     post {
         success {
-            echo 'Pipeline succeeded: built, tested, scanned, and pushed image.'
+            echo '✅ Pipeline succeeded — built, tested, scanned, and pushed image.'
         }
         failure {
-            echo 'Pipeline failed. See console output for details.'
+            echo '❌ Pipeline failed — see console output for details.'
         }
     }
 }
