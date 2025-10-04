@@ -19,8 +19,7 @@ pipeline {
         // -------------------------------------------------
         stage('Checkout') {
             steps {
-                git branch: 'main',
-                    url: 'https://github.com/Smilyy/aws-elastic-beanstalk-express-js-sample.git'
+                checkout scm
             }
         }
 
