@@ -33,11 +33,8 @@ pipeline {
                     sh '''
                       echo ">>> Running build & tests inside Node 18 container..."
                       docker run --rm \
-                        -v ${WORKSPACE}:/app \                 # mount Jenkins workspace
-                        -w /app node:18 bash -c "
-                          npm install --save &&
-                          npm test || true                     # run tests; continue even if some fail
-                        "
+                      -v ${WORKSPACE}:/app \
+                      -w /app node:18 bash -c "npm install --save && npm test || true"
                     '''
                 }
             }
@@ -52,14 +49,10 @@ pipeline {
                     sh '''
                       echo ">>> Running Snyk security scan inside Node 18 container..."
                       docker run --rm \
-                        -v ${WORKSPACE}:/app \                 # use same workspace mount
-                        -w /app node:18 bash -c "
-                          npm install -g snyk &&
-                          snyk auth $SNYK_TOKEN &&
-                          snyk test --severity-threshold=high
-                        " || EXIT_CODE=$?
+                      -v ${WORKSPACE}:/app \
+                      -w /app node:18 bash -c "npm install -g snyk && snyk auth $SNYK_TOKEN && snyk test --severity-threshold=high" || EXIT_CODE=$?
                       if [ "$EXIT_CODE" != "" ]; then
-                        echo "❌ Detected HIGH/CRITICAL vulnerabilities. Failing pipeline."
+                        echo "Detected HIGH/CRITICAL vulnerabilities. Failing pipeline."
                         exit 1
                       fi
                     '''
@@ -100,14 +93,14 @@ pipeline {
     }
 
     // -------------------------------------------------
-    // ✅ Post-build actions
+    // Post-build actions
     // -------------------------------------------------
     post {
         success {
-            echo '✅ Pipeline succeeded — built, tested, scanned, and pushed image.'
+            echo ' Pipeline succeeded — built, tested, scanned, and pushed image.'
         }
         failure {
-            echo '❌ Pipeline failed — see console output for details.'
+            echo 'Pipeline failed — see console output for details.'
         }
     }
 }
