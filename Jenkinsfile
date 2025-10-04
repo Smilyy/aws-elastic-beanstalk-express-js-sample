@@ -3,27 +3,14 @@
 // ===============================================
 
 pipeline {
-    // --------------------------------------------------
-    // The entire pipeline runs inside a Node 16 container
-    // configured to talk to Docker-in-Docker securely.
-    // --------------------------------------------------
-    agent {
-        docker {
-            image 'node:16'                       // official Node 16 image
-            args '''
-              -u root                             \
-              -v /var/run/docker.sock:/var/run/docker.sock \
-              -v /usr/bin/docker:/usr/bin/docker   \
-              -v /var/jenkins_home:/var/jenkins_home
-            '''
-        }
-    }
+    agent any   // A Jenkins pipeline to make sure it can start shell process inside a container
+    //but we'll build/test inside Node 16 below.
 
     environment {
-        APP_NAME   = 'aws-node-app'               // App name
-        REGISTRY   = 'docker.io/smilyy'           // My Docker Hub username
-        IMAGE_TAG  = "${env.BUILD_NUMBER}"        // Make tag = build number
-        SNYK_TOKEN = credentials('snyk-token')    // Snyk secret from Jenkins (I add this config in Jenkins)
+        APP_NAME   = 'aws-node-app'
+        REGISTRY   = 'docker.io/smilyy'
+        IMAGE_TAG  = "${env.BUILD_NUMBER}"
+        SNYK_TOKEN = credentials('snyk-token')
     }
 
     stages {
@@ -34,36 +21,32 @@ pipeline {
         stage('Checkout') {
             steps {
                 git branch: 'main',
-                    url: 'https://github.com/Smilyy/aws-elastic-beanstalk-express-js-sample.git' //my repo address
+                    url: 'https://github.com/Smilyy/aws-elastic-beanstalk-express-js-sample.git'
             }
         }
 
         // ----------------------------
-        // 2. Install dependencies
+        // 2. Build & Test inside Node 16 container
         // ----------------------------
-        stage('Install Dependencies') {
+        stage('Build & Test (Node16)') {
             steps {
-                sh '''
-                  apt-get update -y
-                  apt-get install -y npm
-                  npm install --save
-                '''
+                script {
+                    sh '''
+                      echo ">>> Running build & tests inside Node 16 Docker container..."
+                      docker run --rm -v $(pwd):/app -w /app node:16 bash -c "
+                        apt-get update -y &&
+                        npm install --save &&
+                        npm test || true
+                      "
+                    '''
+                }
             }
         }
 
         // ----------------------------
-        // 3. Run unit tests
+        // 3. Security Scan (Snyk)
         // ----------------------------
-        stage('Test') {
-            steps {
-                sh 'npm test || true'
-            }
-        }
-
-        // ----------------------------
-        // 4. Security Scan
-        // ----------------------------
-        stage('Security Scan') {
+        stage('Security Scan (Snyk)') {
             steps {
                 sh '''
                   npm install -g snyk
@@ -74,7 +57,7 @@ pipeline {
         }
 
         // ----------------------------
-        // 5. Build Docker image
+        // 4. Build Docker image
         // ----------------------------
         stage('Build Docker Image') {
             steps {
@@ -83,17 +66,15 @@ pipeline {
         }
 
         // ----------------------------
-        // 6. Push image to DockerHub
+        // 5. Push Docker image
         // ----------------------------
         stage('Push Docker Image') {
             steps {
-                withCredentials([
-                    usernamePassword(
-                        credentialsId: 'dockerhub-creds',
-                        usernameVariable: 'DOCKER_USER',
-                        passwordVariable: 'DOCKER_PASS'
-                    )
-                ]) {
+                withCredentials([usernamePassword(
+                    credentialsId: 'dockerhub-creds',
+                    usernameVariable: 'DOCKER_USER',
+                    passwordVariable: 'DOCKER_PASS'
+                )]) {
                     sh '''
                       echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin
                       docker push $REGISTRY/$APP_NAME:$IMAGE_TAG
@@ -103,12 +84,9 @@ pipeline {
         }
     }
 
-    // --------------------------------------------------
-    // Post-build notifications
-    // --------------------------------------------------
     post {
         success {
-            echo 'Build, test, security scan, and image push completed successfully.'
+            echo 'Pipeline completed successfully — built and tested in Node 16 container, scanned, and pushed.'
         }
         failure {
             echo 'Pipeline failed. Check logs for details.'
