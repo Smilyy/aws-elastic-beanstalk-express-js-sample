@@ -3,8 +3,7 @@
 // ===============================================
 
 pipeline {
-    agent any   // A Jenkins pipeline to make sure it can start shell process inside a container
-    //but we'll build/test inside Node 16 below.
+    agent any   // Jenkins runs the orchestration, but Node 16 container does the build/test
 
     environment {
         APP_NAME   = 'aws-node-app'
@@ -28,12 +27,12 @@ pipeline {
         // ----------------------------
         // 2. Build & Test inside Node 16 container
         // ----------------------------
-        stage('Build & Test (Node16)') {
+        stage('Build & Test (Node18)') {
             steps {
                 script {
                     sh '''
-                      echo ">>> Running build & tests inside Node 16 Docker container..."
-                      docker run --rm -v $(pwd):/app -w /app node:16 bash -c "
+                      echo ">>> Running build & tests inside Node 18 Docker container..."
+                      docker run --rm -v $(pwd):/app -w /app node:18 bash -c "
                         apt-get update -y &&
                         npm install --save &&
                         npm test || true
@@ -44,15 +43,26 @@ pipeline {
         }
 
         // ----------------------------
-        // 3. Security Scan (Snyk)
+        // 3. Security Scan (Snyk) — FAIL on High/Critical issues
         // ----------------------------
         stage('Security Scan (Snyk)') {
             steps {
-                sh '''
-                  npm install -g snyk
-                  snyk auth $SNYK_TOKEN
-                  snyk test --severity-threshold=high
-                '''
+                script {
+                    sh '''
+                      echo ">>> Running Snyk security scan..."
+                      npm install -g snyk
+                      snyk auth $SNYK_TOKEN
+                      # Run test and capture exit code
+                      snyk test --severity-threshold=high || EXIT_CODE=$?
+                      # If exit code is non-zero, fail the build
+                      if [ "$EXIT_CODE" != "0" ]; then
+                        echo "High or Critical vulnerabilities detected! Failing pipeline."
+                        exit 1
+                      else
+                        echo "No High/Critical vulnerabilities found."
+                      fi
+                    '''
+                }
             }
         }
 
@@ -86,10 +96,10 @@ pipeline {
 
     post {
         success {
-            echo 'Pipeline completed successfully — built and tested in Node 16 container, scanned, and pushed.'
+            echo 'Pipeline completed successfully — built/tested in Node 16 container, scanned (no high/critical issues), and pushed to Docker Hub.'
         }
         failure {
-            echo 'Pipeline failed. Check logs for details.'
+            echo 'Pipeline failed. Check logs for details (likely due to vulnerabilities or build error).'
         }
     }
 }
