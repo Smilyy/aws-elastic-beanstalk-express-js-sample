@@ -1,22 +1,21 @@
 // ===============================================
-// Assignment 2 - Task 3: CI/CD Pipeline for Node.js App
+// Assignment 2 – Task 3: CI/CD Pipeline for Node.js App
 // ===============================================
 
 pipeline {
-    agent any   // Jenkins runs the orchestration, but Node 16 container does the build/test in whis file later
+    agent any  // Jenkins orchestrates; build & scan run inside Node 18 container
 
     environment {
         APP_NAME   = 'aws-node-app'
-        REGISTRY   = 'docker.io/smilyy'
-        IMAGE_TAG  = "${env.BUILD_NUMBER}"
-        SNYK_TOKEN = credentials('snyk-token')
+        REGISTRY   = 'docker.io/smilyy'            // DockerHub namespace
+        IMAGE_TAG  = "${env.BUILD_NUMBER}"        // Use build number as tag
+        SNYK_TOKEN = credentials('snyk-token')    // Snyk API token stored in Jenkins
     }
 
     stages {
-
-        // ----------------------------
-        // 1. Checkout repository
-        // ----------------------------
+        // -------------------------------------------------
+        // 1. Checkout the repo (so workspace has app files)
+        // -------------------------------------------------
         stage('Checkout') {
             steps {
                 git branch: 'main',
@@ -24,60 +23,61 @@ pipeline {
             }
         }
 
-        // ----------------------------
-        // 2. Build & Test inside Node 16 container
-        // ----------------------------
+        // -------------------------------------------------
+        // 2. Build & Test inside Node 18 container
+        // -------------------------------------------------
         stage('Build & Test (Node18)') {
             steps {
                 script {
                     sh '''
-                      echo ">>> Running build & tests inside Node 18 Docker container..."
-                      docker run --rm -v $(pwd):/app -w /app node:18 bash -c "
-                        apt-get update -y &&
-                        npm install --save &&
-                        npm test || true
-                      "
+                      echo ">>> Running build & tests inside Node 18 container..."
+                      docker run --rm \
+                        -v $(pwd):/app \
+                        -w /app node:18 bash -c "
+                          npm install --save &&
+                          npm test || true
+                        "
                     '''
                 }
             }
         }
 
-        // ----------------------------
-        // 3. Security Scan (Snyk) — FAIL on High/Critical issues
-        // ----------------------------
+        // -------------------------------------------------
+        // 3. Security Scan (Snyk) — FAIL on HIGH/CRITICAL
+        // -------------------------------------------------
         stage('Security Scan (Snyk)') {
             steps {
                 script {
                     sh '''
-                      echo ">>> Running Snyk security scan..."
-                      npm install -g snyk
-                      snyk auth $SNYK_TOKEN
-                      # Run test and capture exit code
-                      snyk test --severity-threshold=high || EXIT_CODE=$?
-                      # If exit code is non-zero, fail the build
-                      if [ "$EXIT_CODE" != "0" ]; then
-                        echo "High or Critical vulnerabilities detected! Failing pipeline."
+                      echo ">>> Running Snyk scan inside Node 18 container..."
+                      docker run --rm \
+                        -v $(pwd):/app \
+                        -w /app node:18 bash -c "
+                          npm install -g snyk &&
+                          snyk auth $SNYK_TOKEN &&
+                          snyk test --severity-threshold=high
+                        " || EXIT_CODE=$?
+                      if [ "$EXIT_CODE" != "" ]; then
+                        echo "Detected HIGH/CRITICAL vulnerabilities. Failing pipeline."
                         exit 1
-                      else
-                        echo "No High/Critical vulnerabilities found."
                       fi
                     '''
                 }
             }
         }
 
-        // ----------------------------
-        // 4. Build Docker image
-        // ----------------------------
+        // -------------------------------------------------
+        // 4. Build Docker Image (Node.js app container)
+        // -------------------------------------------------
         stage('Build Docker Image') {
             steps {
                 sh "docker build -t $REGISTRY/$APP_NAME:$IMAGE_TAG ."
             }
         }
 
-        // ----------------------------
-        // 5. Push Docker image
-        // ----------------------------
+        // -------------------------------------------------
+        // 5. Push Docker image to DockerHub
+        // -------------------------------------------------
         stage('Push Docker Image') {
             steps {
                 withCredentials([usernamePassword(
@@ -96,10 +96,10 @@ pipeline {
 
     post {
         success {
-            echo 'Pipeline completed successfully — built/tested in Node 16 container, scanned (no high/critical issues), and pushed to Docker Hub.'
+            echo 'Pipeline succeeded: built, tested, scanned, and pushed image.'
         }
         failure {
-            echo 'Pipeline failed. Check logs for details (likely due to vulnerabilities or build error).'
+            echo 'Pipeline failed. See console output for details.'
         }
     }
 }
