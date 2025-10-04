@@ -51,8 +51,8 @@ pipeline {
                 sh '''
                   echo ">>> Running Snyk security scan..."
                   npm install snyk
-                  snyk auth $SNYK_TOKEN
-                  snyk test --severity-threshold=high
+                  npx snyk auth $SNYK_TOKEN
+                  npx snyk test --severity-threshold=high
                 '''
             }
         }
