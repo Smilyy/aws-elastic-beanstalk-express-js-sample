@@ -3,39 +3,40 @@
 // ===============================================
 
 pipeline {
-    agent any   // Jenkins orchestrates; build & scan stages run inside Node 18 Docker containers
+    agent any   // Jenkins master controls stages; node:18 runs as build agent per stage
 
     environment {
-        APP_NAME   = 'aws-node-app'                  // Application name label
-        REGISTRY   = 'docker.io/smilyy'              // DockerHub namespace
-        IMAGE_TAG  = "${env.BUILD_NUMBER}"           // Auto-increment build tag
-        SNYK_TOKEN = credentials('snyk-token')       // Snyk API token stored in Jenkins credentials
+        APP_NAME   = 'aws-node-app'           // Application name
+        REGISTRY   = 'docker.io/smilyy'       // DockerHub namespace
+        IMAGE_TAG  = "${env.BUILD_NUMBER}"    // Auto-increment build tag
+        SNYK_TOKEN = credentials('snyk-token')// Snyk token from Jenkins credentials
     }
 
     stages {
 
         // -------------------------------------------------
-        // 1️⃣ Checkout repository (ensure app files are present)
+        // 1️⃣ Checkout code from GitHub
         // -------------------------------------------------
         stage('Checkout') {
             steps {
-                checkout scm
+                git branch: 'main',
+                    url: 'https://github.com/Smilyy/aws-elastic-beanstalk-express-js-sample.git'
             }
         }
 
         // -------------------------------------------------
-        // 2️⃣ Build & Test inside Node 18 container
+        // 2️⃣ Build & Test inside Node 18 Docker agent
         // -------------------------------------------------
         stage('Build & Test (Node18)') {
+            agent {
+                docker { image 'node:18' }   // Jenkins automatically mounts workspace
+            }
             steps {
-                script {
-                    sh '''
-                      echo ">>> Running build & tests inside Node 18 container..."
-                      docker run --rm \
-                      -v ${WORKSPACE}:/app \
-                      -w /app node:18 bash -c "npm install --save && npm test || true"
-                    '''
-                }
+                sh '''
+                  echo ">>> Running build & tests using Node 18..."
+                  npm install --save
+                  npm test || true
+                '''
             }
         }
 
@@ -43,19 +44,16 @@ pipeline {
         // 3️⃣ Security Scan (Snyk) — fail on High/Critical
         // -------------------------------------------------
         stage('Security Scan (Snyk)') {
+            agent {
+                docker { image 'node:18' }   // Run inside same image
+            }
             steps {
-                script {
-                    sh '''
-                      echo ">>> Running Snyk security scan inside Node 18 container..."
-                      docker run --rm \
-                      -v ${WORKSPACE}:/app \
-                      -w /app node:18 bash -c "npm install -g snyk && snyk auth $SNYK_TOKEN && snyk test --severity-threshold=high" || EXIT_CODE=$?
-                      if [ "$EXIT_CODE" != "" ]; then
-                        echo "Detected HIGH/CRITICAL vulnerabilities. Failing pipeline."
-                        exit 1
-                      fi
-                    '''
-                }
+                sh '''
+                  echo ">>> Running Snyk security scan..."
+                  npm install -g snyk
+                  snyk auth $SNYK_TOKEN
+                  snyk test --severity-threshold=high
+                '''
             }
         }
 
@@ -72,7 +70,7 @@ pipeline {
         }
 
         // -------------------------------------------------
-        // 5️⃣ Push image to Docker Hub
+        // 5️⃣ Push image to DockerHub
         // -------------------------------------------------
         stage('Push Docker Image') {
             steps {
@@ -92,11 +90,11 @@ pipeline {
     }
 
     // -------------------------------------------------
-    // Post-build actions
+    // 🧾 Post-build feedback
     // -------------------------------------------------
     post {
         success {
-            echo ' Pipeline succeeded — built, tested, scanned, and pushed image.'
+            echo 'Pipeline succeeded — built, tested, scanned, and pushed image.'
         }
         failure {
             echo 'Pipeline failed — see console output for details.'
